@@ -1,141 +1,255 @@
-// Drawing only: the world's state and the current screen in, pixels out. The 1280x720 playfield
-// is scaled to fit the window and centred, the margin filled with the backdrop colour. Flat
-// rectangles and circles, canvas text for the HUD and the panels. Text that holds a number is
-// rebuilt only when the number changes, so a frame allocates nothing.
-import { FIELD, FONT, LIVES, PALETTE } from './config.js';
-import { KIND_COIN } from './world.js';
+// All drawing: floor, walls, cover, shadows, cones, guards, cameras,
+// lasers, loot, exit, player and the alarm flash. Canvas 2D only.
+const Render = {
+  draw(ctx, game) {
+    const level = game.level;
+    const t = game.time;
+    ctx.clearRect(0, 0, CW, CH);
 
-export const SCREEN_TITLE = 'title';
-export const SCREEN_PLAY = 'play';
-export const SCREEN_PAUSED = 'paused';
-export const SCREEN_OVER = 'over';
-
-/** The panel's width; its height grows with its lines: room for the title, the lines and the prompt. */
-const PANEL = { width: 600, top: 134, line: 34, bottom: 70 };
-const LIFE_SIZE = 20;
-const LIFE_GAP = 8;
-
-function cachedLabel(prefix) {
-  let value = -1;
-  let text = '';
-  return function label(next) {
-    if (next !== value) {
-      value = next;
-      text = prefix + next;
-    }
-    return text;
-  };
-}
-
-export function createRenderer(canvas) {
-  const context = canvas.getContext('2d');
-  const view = { scale: 1, x: 0, y: 0 };
-  const scoreLabel = cachedLabel('Score ');
-  const levelLabel = cachedLabel('Level ');
-  const finalLabel = cachedLabel('Score ');
-  const bestLabel = cachedLabel('Best ');
-
-  function resize() {
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.round(window.innerWidth * ratio);
-    const height = Math.round(window.innerHeight * ratio);
-    canvas.width = width;
-    canvas.height = height;
-    view.scale = Math.min(width / FIELD.width, height / FIELD.height);
-    view.x = (width - FIELD.width * view.scale) / 2;
-    view.y = (height - FIELD.height * view.scale) / 2;
-  }
-
-  const fonts = new Map();
-  function text(value, x, y, size, color, align) {
-    if (!fonts.has(size)) fonts.set(size, `${size}px ${FONT}`);
-    context.font = fonts.get(size);
-    context.fillStyle = color;
-    context.textAlign = align;
-    context.fillText(value, x, y);
-  }
-
-  function drawField(state) {
-    context.fillStyle = PALETTE.sky;
-    context.fillRect(0, 0, FIELD.width, FIELD.height);
-    context.fillStyle = PALETTE.ground;
-    context.fillRect(0, FIELD.groundY, FIELD.width, FIELD.height - FIELD.groundY);
-
-    const items = state.items;
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      if (item.kind === KIND_COIN) {
-        context.fillStyle = PALETTE.coin;
-        context.beginPath();
-        context.arc(item.x + item.width / 2, item.y + item.height / 2, item.width / 2, 0, Math.PI * 2);
-        context.fill();
-      } else {
-        context.fillStyle = PALETTE.block;
-        context.fillRect(item.x, item.y, item.width, item.height);
+    // Floor: navy checker.
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const k = level.tiles[r][c];
+        ctx.fillStyle = (r + c) % 2 === 0 ? "#1a2436" : "#16202f";
+        ctx.fillRect(c * TILE, r * TILE, TILE, TILE);
+        if (k === 3) {
+          ctx.fillStyle = "rgba(8, 16, 38, 0.55)";
+          ctx.fillRect(c * TILE, r * TILE, TILE, TILE);
+        }
       }
     }
 
-    const player = state.player;
-    // Blink while invulnerable after a hit: hidden on every other tenth of a second.
-    if (player.invulnerable === 0 || Math.floor(player.invulnerable * 10) % 2 === 1) {
-      context.fillStyle = PALETTE.player;
-      context.fillRect(player.x, player.y, player.width, player.height);
+    // Walls with a warm gold top edge; desks as solid brown blocks.
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const k = level.tiles[r][c];
+        if (k === 1) {
+          ctx.fillStyle = "#3a3f4a";
+          ctx.fillRect(c * TILE, r * TILE, TILE, TILE);
+          ctx.fillStyle = "#c9a227";
+          ctx.fillRect(c * TILE, r * TILE, TILE, 4);
+        } else if (k === 2) {
+          ctx.fillStyle = "#6b4f2a";
+          ctx.fillRect(c * TILE + 3, r * TILE + 3, TILE - 6, TILE - 6);
+          ctx.strokeStyle = "#8a6a3a";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(c * TILE + 3, r * TILE + 3, TILE - 6, TILE - 6);
+          ctx.beginPath();
+          ctx.moveTo(c * TILE + 8, r * TILE + 8);
+          ctx.lineTo(c * TILE + TILE - 8, r * TILE + TILE - 8);
+          ctx.moveTo(c * TILE + TILE - 8, r * TILE + 8);
+          ctx.lineTo(c * TILE + 8, r * TILE + TILE - 8);
+          ctx.stroke();
+        }
+      }
     }
-  }
 
-  function drawHud(state) {
-    context.textBaseline = 'top';
-    text(scoreLabel(state.score), 24, 20, 28, PALETTE.text, 'left');
-    text(levelLabel(state.level), FIELD.width / 2, 20, 28, PALETTE.text, 'center');
-    const firstLife = FIELD.width - 24 - LIVES * (LIFE_SIZE + LIFE_GAP) + LIFE_GAP;
-    text('Lives', firstLife - 12, 20, 28, PALETTE.text, 'right');
-    for (let life = 0; life < LIVES; life += 1) {
-      context.fillStyle = life < state.lives ? PALETTE.player : PALETTE.ground;
-      context.fillRect(firstLife + life * (LIFE_SIZE + LIFE_GAP), 24, LIFE_SIZE, LIFE_SIZE);
+    // Exit: glowing green door (grey + LOCKED while the loot is missing
+    // or while a full alarm locks it).
+    const exit = level.exit;
+    const exitLocked = !game.loot || game.alarmEvent;
+    ctx.save();
+    ctx.shadowColor = exitLocked ? "#888888" : "#22c55e";
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = exitLocked ? "#4b5563" : "#16a34a";
+    ctx.fillRect(exit.x - 16, exit.y - 16, 32, 32);
+    ctx.restore();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 11px 'Trebuchet MS', Verdana, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(exitLocked ? "LOCKED" : "EXIT", exit.x, exit.y - 22);
+
+    // Loot: a glowing gold shape (vault, diamond or crown by level).
+    if (!game.loot) this.drawLoot(ctx, level.loot, game.levelIndex, t);
+
+    // Hack panels: small wall boxes with a blinking light.
+    for (const panel of game.panels) {
+      const cam = game.cameras[panel.cam];
+      ctx.fillStyle = cam.disabled ? "#374151" : "#0ea5e9";
+      ctx.fillRect(panel.x - 10, panel.y - 12, 20, 24);
+      ctx.fillStyle = cam.disabled ? "#9ca3af" : "#ffffff";
+      ctx.font = "bold 10px 'Trebuchet MS', Verdana, sans-serif";
+      ctx.fillText(cam.disabled ? "OFF" : "PANEL", panel.x, panel.y - 16);
     }
-  }
 
-  function drawPanel(title, lines, prompt) {
-    const height = PANEL.top + lines.length * PANEL.line + PANEL.bottom;
-    const x = (FIELD.width - PANEL.width) / 2;
-    const y = (FIELD.height - height) / 2;
-    context.fillStyle = PALETTE.panel;
-    context.fillRect(x, y, PANEL.width, height);
-    context.textBaseline = 'alphabetic';
-    text(title, FIELD.width / 2, y + 78, 48, PALETTE.text, 'center');
-    for (let index = 0; index < lines.length; index += 1) {
-      text(lines[index], FIELD.width / 2, y + PANEL.top + index * PANEL.line, 22, PALETTE.muted, 'center');
+    // Camera cones (blue; red and flashing while spotting).
+    for (const cam of game.cameras) {
+      if (cam.disabled) continue;
+      const pts = conePolygon(level, cam.x, cam.y, cam.angle, CFG.camConeAngle / 2, CFG.camConeRange, 22);
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      const flashing = cam.spotting && Math.floor(t * 6) % 2 === 0;
+      ctx.fillStyle = flashing ? "rgba(239, 68, 68, 0.45)" : "rgba(59, 130, 246, 0.28)";
+      ctx.fill();
     }
-    text(prompt, FIELD.width / 2, y + height - 40, 24, PALETTE.coin, 'center');
-  }
 
-  const TITLE_LINES = ['Dodge the red blocks. Catch the gold coins.', 'Move with ← → or A D.  Pause with P.', ''];
-  const PAUSED_LINES = ['The blocks will wait for you.'];
-  const OVER_LINES = ['', ''];
-
-  /** Paint one frame: the field, then the HUD or a panel for the screen the game is on. */
-  function draw(state, screen, best) {
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.fillStyle = PALETTE.backdrop;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
-    drawField(state);
-    if (screen === SCREEN_TITLE) {
-      TITLE_LINES[2] = bestLabel(best);
-      drawPanel('Block Dodger', TITLE_LINES, 'Press Space or click to start');
-      return;
+    // Guard cones (yellow; orange while suspicious, red while alerted).
+    for (const g of game.guards) {
+      const pts = conePolygon(level, g.x, g.y, g.facing, CFG.guardConeAngle / 2, CFG.guardConeRange, 22);
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      ctx.fillStyle = g.state === "alerted" ? "rgba(239, 68, 68, 0.45)"
+        : g.state === "suspicious" ? "rgba(249, 115, 22, 0.4)"
+        : "rgba(250, 204, 21, 0.28)";
+      ctx.fill();
     }
-    drawHud(state);
-    if (screen === SCREEN_PAUSED) drawPanel('Paused', PAUSED_LINES, 'Press P to resume');
-    else if (screen === SCREEN_OVER) {
-      OVER_LINES[0] = finalLabel(state.score);
-      OVER_LINES[1] = bestLabel(best);
-      drawPanel('Game over', OVER_LINES, 'Press Space or click to play again');
-    }
-  }
 
-  resize();
-  window.addEventListener('resize', resize);
-  return { draw };
-}
+    // Laser beams: thin red lines sweeping from their emitters.
+    for (const laser of game.lasers) {
+      const d = castRay(level, laser.x, laser.y, laser.angle, laser.range);
+      const ex = laser.x + Math.cos(laser.angle) * d;
+      const ey = laser.y + Math.sin(laser.angle) * d;
+      ctx.strokeStyle = game.laserHit ? "#ff2222" : "rgba(239, 68, 68, 0.75)";
+      ctx.lineWidth = game.laserHit ? 4 : 2;
+      ctx.beginPath();
+      ctx.moveTo(laser.x, laser.y);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      ctx.fillStyle = "#7f1d1d";
+      ctx.fillRect(laser.x - 8, laser.y - 8, 16, 16);
+    }
+
+    // Cameras: small wall units; grey with OFF once hacked.
+    for (const cam of game.cameras) {
+      ctx.fillStyle = cam.disabled ? "#4b5563" : "#94a3b8";
+      ctx.beginPath();
+      ctx.arc(cam.x, cam.y, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = cam.disabled ? "#9ca3af" : "#1e293b";
+      ctx.beginPath();
+      ctx.arc(cam.x + Math.cos(cam.angle) * 5, cam.y + Math.sin(cam.angle) * 5, 4, 0, Math.PI * 2);
+      ctx.fill();
+      if (cam.disabled) {
+        ctx.fillStyle = "#d1d5db";
+        ctx.font = "bold 9px 'Trebuchet MS', Verdana, sans-serif";
+        ctx.fillText("OFF", cam.x, cam.y - 14);
+      }
+    }
+
+    // Guards: dark uniform, lighter cap, direction tick, ? / ! and suspicion bar.
+    for (const g of game.guards) {
+      ctx.fillStyle = "#1f2937";
+      ctx.beginPath();
+      ctx.arc(g.x, g.y, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#e5e7eb";
+      ctx.beginPath();
+      ctx.arc(g.x, g.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#e5e7eb";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(g.x, g.y);
+      ctx.lineTo(g.x + Math.cos(g.facing) * 18, g.y + Math.sin(g.facing) * 18);
+      ctx.stroke();
+      if (g.state === "suspicious" || g.state === "alerted") {
+        ctx.fillStyle = g.state === "alerted" ? "#ef4444" : "#f97316";
+        ctx.font = "bold 18px 'Trebuchet MS', Verdana, sans-serif";
+        ctx.fillText(g.state === "alerted" ? "!" : "?", g.x, g.y - 18);
+      }
+      if (g.suspicion > 0 && g.state !== "alerted") {
+        ctx.fillStyle = "#111827";
+        ctx.fillRect(g.x - 12, g.y - 26, 24, 4);
+        ctx.fillStyle = "#f97316";
+        ctx.fillRect(g.x - 12, g.y - 26, 24 * g.suspicion, 4);
+      }
+    }
+
+    // Player: a hooded shape with a soft light ring; dimmer in shadow.
+    const p = game.player;
+    const inShadow = onShadow(level, p.x, p.y);
+    ctx.save();
+    ctx.globalAlpha = inShadow ? 0.6 : 1;
+    const glow = ctx.createRadialGradient(p.x, p.y, 4, p.x, p.y, 44);
+    glow.addColorStop(0, "rgba(250, 204, 21, 0.3)");
+    glow.addColorStop(1, "rgba(250, 204, 21, 0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 44, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#0f172a";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#facc15";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Hack progress ring over the player.
+    if (game.hackT > 0) {
+      ctx.strokeStyle = "#0ea5e9";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 20, -Math.PI / 2, -Math.PI / 2 + (game.hackT / CFG.hackTime) * Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Toast text (hints such as "Camera disabled" or "Locked").
+    if (game.toastT > 0) {
+      ctx.fillStyle = "rgba(17, 24, 39, 0.85)";
+      ctx.fillRect(CW / 2 - 130, 12, 260, 26);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 13px 'Trebuchet MS', Verdana, sans-serif";
+      ctx.fillText(game.toast, CW / 2, 30);
+    }
+
+    // Full-alarm flashing border.
+    if (game.alarmEvent) {
+      ctx.strokeStyle = Math.floor(t * 4) % 2 === 0 ? "rgba(239, 68, 68, 0.9)" : "rgba(239, 68, 68, 0.3)";
+      ctx.lineWidth = 8;
+      ctx.strokeRect(4, 4, CW - 8, CH - 8);
+      ctx.fillStyle = "#ef4444";
+      ctx.font = "bold 20px 'Trebuchet MS', Verdana, sans-serif";
+      ctx.fillText("ALARM — EXIT LOCKED", CW / 2, 44);
+    }
+  },
+
+  drawLoot(ctx, loot, levelIndex, t) {
+    const pulse = 1 + Math.sin(t * 4) * 0.12;
+    ctx.save();
+    ctx.translate(loot.x, loot.y);
+    ctx.scale(pulse, pulse);
+    ctx.shadowColor = "#facc15";
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = "#facc15";
+    if (levelIndex === 0) {
+      // Gold vault: a small safe with a dial.
+      ctx.fillRect(-13, -11, 26, 22);
+      ctx.fillStyle = "#78350f";
+      ctx.beginPath();
+      ctx.arc(0, 0, 6, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (levelIndex === 1) {
+      // Diamond.
+      ctx.beginPath();
+      ctx.moveTo(0, -13);
+      ctx.lineTo(11, 0);
+      ctx.lineTo(0, 13);
+      ctx.lineTo(-11, 0);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // Crown.
+      ctx.beginPath();
+      ctx.moveTo(-12, 10);
+      ctx.lineTo(-12, -6);
+      ctx.lineTo(-6, 2);
+      ctx.lineTo(0, -10);
+      ctx.lineTo(6, 2);
+      ctx.lineTo(12, -6);
+      ctx.lineTo(12, 10);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  },
+};

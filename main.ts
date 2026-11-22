@@ -1,4 +1,8 @@
-// A working best-game-01 entry (Node 22, standard library only): the game is this directory's
+// The Midnight Vault: a top-down heist game — guards with vision cones,
+// hackable security cameras, an alarm meter, loot and a locked exit.
+// This entrypoint hands game/ and screenshots/ to /output with a dossier.
+// Screenshots are staged renders of the game's own code (game/src/shots.js).
+
 // game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
 // modules, no library and no network request), and the program hands it in. It copies game/ and
 // screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
